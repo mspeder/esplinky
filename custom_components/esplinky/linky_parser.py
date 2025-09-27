@@ -1,88 +1,80 @@
+"""Utility to parse and validate a Linky TeleInformation Client (TIC) frame."""
+
 import logging
 
 _LOGGER = logging.getLogger(__name__)
 
-# Constants for Linky TIC Historic Mode Parsing
-# The frame is composed of lines (group of labels) separated by line feed (LF, \n).
-# Each group is structured as: LABEL[SPACE]VALUE[SPACE]CHECKSUM[CR]
-TIC_FRAME_DELIMITER = b'\n'
-TIC_FIELD_SEPARATOR = b' '
-TIC_CHECKSUM_SIZE = 1 # Checksum is a single character
+def validate_checksum(line: str) -> bool:
+    """Validate the checksum of a single TIC data line."""
+    # A TIC line looks like: LABEL VALUE CHECKSUM
+    
+    # 1. Check for the mandatory line structure (LABEL + VALUE + SPACE + CHECKSUM)
+    # The checksum is the last character, separated by a space from the data
+    if len(line) < 3 or line[-2] != ' ':
+        return False
+        
+    # 2. Extract data to be checksummed (everything up to the space before the checksum)
+    # The data includes the line termination character (e.g., CR or LF) if present.
+    checksum_char = line[-1]
+    data_to_sum = line[:-2] 
+    
+    # 3. Calculate the sum of ASCII codes for all characters in the data block
+    checksum_value = sum(ord(char) for char in data_to_sum)
+    
+    # 4. Calculate the ASCII code of the expected checksum character (modulo 64, then offset by 32)
+    expected_checksum = chr((checksum_value & 0x3F) + 0x20)
+    
+    return expected_checksum == checksum_char
 
-def calculate_checksum(data: bytes) -> bytes:
+def parse_tic_frame(raw_frame: bytes) -> dict[str, str]:
     """
-    Calculates the Linky TIC checksum for a given data block (LABEL and VALUE, including spaces).
-    The checksum is the sum of all bytes modulo 64, then offset by 32 (ASCII 32 to 95).
-    """
-    checksum_value = 0
-    for byte in data:
-        checksum_value += byte
-
-    # Checksum calculation: (sum of bytes) % 64 + 32
-    checksum_byte = (checksum_value % 64) + 32
-    return chr(checksum_byte).encode('ascii')
-
-def parse_tic_frame(raw_data: bytes) -> dict:
-    """
-    Parses a raw TIC frame, validates checksums, and returns a dictionary of valid values.
+    Parses a full TIC frame (Historic Mode) and returns valid, extracted values.
     
     Args:
-        raw_data: The raw bytes received from the UDP socket.
-        
+        raw_frame: The raw bytes received over UDP (a full TIC frame).
+
     Returns:
-        A dictionary {label: value} of all data with valid checksums.
+        A dictionary mapping validated Linky labels (e.g., 'BASE', 'PAPP') to their values (e.g., '12345678', '1250').
     """
-    valid_data = {}
+    # Decoding common for Linky: ASCII
+    try:
+        frame_str = raw_frame.decode('ascii').strip()
+    except UnicodeDecodeError:
+        _LOGGER.error("Failed to decode raw TIC frame using ASCII.")
+        return {}
+
+    # Split the frame into individual data lines
+    # Data lines are typically separated by CR (0x0D) or LF (0x0A)
+    lines = frame_str.replace('\r', '\n').split('\n')
     
-    # 1. Clean the data (remove potential leading/trailing garbage, frame start/end markers)
-    # The TIC frame often starts with STX (\x02) and ends with ETX (\x03). 
-    # The split handles the LF (\n) delimiters.
-    lines = raw_data.strip().strip(b'\x02\x03').split(TIC_FRAME_DELIMITER)
+    extracted_data = {}
 
     for line in lines:
-        # Strip Carriage Return (CR, \r) if present
-        line = line.strip(b'\r')
+        line = line.strip()
         if not line:
             continue
-
-        try:
-            # 2. Separate data block from checksum
-            # The checksum is the very last byte of the line.
-            data_block = line[:-TIC_CHECKSUM_SIZE]
-            received_checksum = line[-TIC_CHECKSUM_SIZE:]
             
-            # 3. Calculate expected checksum
-            expected_checksum = calculate_checksum(data_block)
-
-            # 4. Validate checksum
-            if received_checksum != expected_checksum:
-                _LOGGER.warning(
-                    "Checksum failed for line '%s'. Received: %s, Expected: %s",
-                    line.decode('ascii', 'ignore'),
-                    received_checksum.decode('ascii'),
-                    expected_checksum.decode('ascii')
-                )
-                continue
-
-            # Checksum is valid. Extract label and value.
-            parts = data_block.split(TIC_FIELD_SEPARATOR, 1)
-            if len(parts) == 2:
-                label = parts[0].decode('ascii').strip()
-                value = parts[1].decode('ascii').strip()
-                
-                # Attempt to convert value to a number if possible
-                try:
-                    valid_data[label] = int(value)
-                except ValueError:
-                    try:
-                        valid_data[label] = float(value)
-                    except ValueError:
-                        valid_data[label] = value
+        # 1. Validate Checksum
+        if not validate_checksum(line):
+            # Log failure but continue processing other lines
+            _LOGGER.warning("Invalid checksum for TIC line: '%s'", line)
+            continue
             
-        except IndexError:
-            _LOGGER.error("Malformed TIC line (too short): %s", line.decode('ascii', 'ignore'))
-        except Exception as e:
-            _LOGGER.error("Error processing line %s: %s", line.decode('ascii', 'ignore'), e)
-
-    return valid_data
-
+        # 2. Extract Label and Value
+        # A valid line looks like: ADCO 01234567890C
+        
+        # Strip the checksum and the preceding space
+        data_part = line[:-2]
+        
+        # Split by space. Historic mode uses a single space delimiter.
+        parts = data_part.split(' ', 1)
+        
+        if len(parts) == 2:
+            label = parts[0].strip()
+            value = parts[1].strip()
+            
+            # Label must be non-empty and non-data start/end delimiters
+            if label and value and label not in ('\x02', '\x03'):
+                extracted_data[label] = value
+        
+    return extracted_data
