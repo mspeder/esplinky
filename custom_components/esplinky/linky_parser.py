@@ -1,108 +1,80 @@
-"""TIC (Téléinformation Client) frame parsing and checksum validation."""
+"""Utility to parse and validate a Linky TeleInformation Client (TIC) frame."""
 
 import logging
 
 _LOGGER = logging.getLogger(__name__)
 
-# Start-of-frame: 0x02, End-of-frame: 0x03, Separator: 0x0D 0x0A (CR LF)
-FRAME_START = b'\x02'
-FRAME_END = b'\x03'
-LINE_SEPARATOR = b'\r\n'
-
-def calculate_checksum(data_line: str) -> str:
-    """
-    Calculates the 7-bit ASCII checksum for a TIC line.
-    The checksum is the sum of the ASCII codes of all characters
-    in the data_line, modulo 64, offset by 0x20 (' ').
-    """
-    checksum_value = 0
+def validate_checksum(line: str) -> bool:
+    """Validate the checksum of a single TIC data line."""
+    # A TIC line looks like: LABEL VALUE CHECKSUM
     
-    for char in data_line:
-        checksum_value += ord(char)
+    # 1. Check for the mandatory line structure (LABEL + VALUE + SPACE + CHECKSUM)
+    # The checksum is the last character, separated by a space from the data
+    if len(line) < 3 or line[-2] != ' ':
+        return False
         
-    checksum_value = (checksum_value & 0x3F) + 0x20
-    return chr(checksum_value)
+    # 2. Extract data to be checksummed (everything up to the space before the checksum)
+    # The data includes the line termination character (e.g., CR or LF) if present.
+    checksum_char = line[-1]
+    data_to_sum = line[:-2] 
+    
+    # 3. Calculate the sum of ASCII codes for all characters in the data block
+    checksum_value = sum(ord(char) for char in data_to_sum)
+    
+    # 4. Calculate the ASCII code of the expected checksum character (modulo 64, then offset by 32)
+    expected_checksum = chr((checksum_value & 0x3F) + 0x20)
+    
+    return expected_checksum == checksum_char
 
-
-def parse_tic_frame(raw_bytes: bytes) -> dict[str, str]:
+def parse_tic_frame(raw_frame: bytes) -> dict[str, str]:
     """
-    Parses a raw Linky TIC frame, validates checksums, and returns valid data.
+    Parses a full TIC frame (Historic Mode) and returns valid, extracted values.
     
     Args:
-        raw_bytes: The raw UDP packet content (should contain the full TIC frame).
-        
+        raw_frame: The raw bytes received over UDP (a full TIC frame).
+
     Returns:
-        A dictionary of validated {label: value} pairs.
+        A dictionary mapping validated Linky labels (e.g., 'BASE', 'PAPP') to their values (e.g., '12345678', '1250').
     """
-    
+    # Decoding common for Linky: ASCII
     try:
-        # Find the frame boundaries (0x02 and 0x03)
-        start_index = raw_bytes.find(FRAME_START)
-        end_index = raw_bytes.find(FRAME_END)
-        
-        if start_index == -1 or end_index == -1 or end_index < start_index:
-            _LOGGER.warning("Invalid TIC frame boundaries (STX/ETX not found).")
-            return {}
-
-        # Extract the content between STX and ETX
-        frame_content = raw_bytes[start_index + 1 : end_index].strip()
-        
-    except Exception as e:
-        _LOGGER.error("Error processing raw bytes: %s", e)
-        return {}
-    
-    # Decode the extracted content
-    try:
-        # Linky Historic mode uses ISO-8859-1 or 7-bit ASCII
-        frame_str = frame_content.decode("iso-8859-1")
-    except UnicodeDecodeError as e:
-        _LOGGER.error("Failed to decode TIC frame content: %s", e)
+        frame_str = raw_frame.decode('ascii').strip()
+    except UnicodeDecodeError:
+        _LOGGER.error("Failed to decode raw TIC frame using ASCII.")
         return {}
 
-    valid_data: dict[str, str] = {}
+    # Split the frame into individual data lines
+    # Data lines are typically separated by CR (0x0D) or LF (0x0A)
+    lines = frame_str.replace('\r', '\n').split('\n')
     
-    # The frame content is split by CR LF (\r\n)
-    lines = frame_str.split('\r\n')
-    
+    extracted_data = {}
+
     for line in lines:
         line = line.strip()
         if not line:
             continue
-
-        # The line structure is: [Data to Checksum] [Checksum Character]
-        # Example: IINST 018 P
-        
-        # Find the index of the space before the checksum character
-        last_space_index = line.rfind(' ')
-        
-        if last_space_index == -1:
-            _LOGGER.warning("Could not find checksum space separator in line: %s", line)
+            
+        # 1. Validate Checksum
+        if not validate_checksum(line):
+            # Log failure but continue processing other lines
+            _LOGGER.warning("Invalid checksum for TIC line: '%s'", line)
             continue
             
-        # The data to be checksummed is the entire line up to (and including) the last space
-        # This is where the correction is made: including the space before the checksum character.
-        data_to_checksum = line[:last_space_index + 1] 
-        received_checksum = line[last_space_index + 1] # The checksum character itself
-
-        calculated_checksum = calculate_checksum(data_to_checksum)
+        # 2. Extract Label and Value
+        # A valid line looks like: ADCO 01234567890C
         
-        if calculated_checksum == received_checksum:
-            # Checksum valid. Extract label and value from the data_to_checksum string.
-            parts = data_to_checksum.strip().split(' ')
+        # Strip the checksum and the preceding space
+        data_part = line[:-2]
+        
+        # Split by space. Historic mode uses a single space delimiter.
+        parts = data_part.split(' ', 1)
+        
+        if len(parts) == 2:
+            label = parts[0].strip()
+            value = parts[1].strip()
             
-            if len(parts) >= 2:
-                label = parts[0]
-                # In Historic mode, the value is typically the last element of the data fields
-                value = parts[-1] 
-                valid_data[label] = value
-            else:
-                _LOGGER.debug("Skipping line with unexpected format after checksum validation: %s", line)
-                
-        else:
-            # We log the data that failed the checksum, which helps debugging the source.
-            _LOGGER.warning(
-                "Invalid checksum for TIC line: '%s' (Received: '%s', Calculated: '%s'). Source issue.",
-                data_to_checksum.strip(), received_checksum, calculated_checksum
-            )
-
-    return valid_data
+            # Label must be non-empty and non-data start/end delimiters
+            if label and value and label not in ('\x02', '\x03'):
+                extracted_data[label] = value
+        
+    return extracted_data
