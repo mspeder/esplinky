@@ -73,15 +73,18 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         _LOGGER.error("Failed to bind UDP socket on port %d: %s", port, err)
         raise ConfigEntryNotReady(f"Failed to bind UDP socket on port {port}") from err
         
-    # Set up the sensor platform
-    await hass.config_entries.async_forward_entry_setup(entry, "sensor")
+    # Set up the sensor platform using the list of platforms
+    # Corrected method name from 'async_forward_entry_setup' (singular) 
+    # to 'async_forward_entry_setups' (plural) to fix AttributeError.
+    await hass.config_entries.async_forward_entry_setups(entry, PLATFORMS)
 
     return True
 
 async def async_unload_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     """Unload a config entry."""
     # Unload the sensor platform
-    unload_ok = await hass.config_entries.async_forward_entry_unload(entry, "sensor")
+    # The modern counterpart for unloading a list of platforms is async_unload_platforms.
+    unload_ok = await hass.config_entries.async_unload_platforms(entry, PLATFORMS)
     
     # Close the UDP transport
     transport = hass.data[DOMAIN].pop("transport", None)
