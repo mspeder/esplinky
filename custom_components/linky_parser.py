@@ -1,5 +1,3 @@
-"""Utility to parse a raw Linky TIC historic mode frame and validate checksums."""
-
 import logging
 
 _LOGGER = logging.getLogger(__name__)

@@ -1,5 +1,3 @@
-"""The Esplinky UDP Listener integration for Home Assistant."""
-
 import asyncio
 import logging
 from typing import Any
