@@ -1,3 +1,5 @@
+"""The Esplinky UDP Listener integration for Home Assistant."""
+
 import asyncio
 import logging
 from typing import Any
@@ -5,6 +7,7 @@ from typing import Any
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant, callback
 from homeassistant.exceptions import ConfigEntryNotReady
+
 from . import linky_parser # Import the TIC parsing utility
 
 _LOGGER = logging.getLogger(__name__)
@@ -91,38 +94,3 @@ async def async_unload_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         hass.data.pop(DOMAIN)
 
     return unload_ok
-
-# Dummy Config Flow (required because config_flow: true in manifest)
-# This allows the user to configure the port via the HA UI.
-
-from homeassistant.config_entries import ConfigFlow
-from homeassistant.data_entry_flow import FlowResult
-import voluptuous as vol
-
-DATA_SCHEMA = vol.Schema({
-    vol.Optional(CONF_PORT, default=DEFAULT_PORT): vol.Coerce(int)
-})
-
-class EsplinkyConfigFlow(ConfigFlow, domain=DOMAIN):
-    """Handle a config flow for Esplinky."""
-
-    VERSION = 1
-
-    async def async_step_user(self, user_input: dict[str, Any] | None = None) -> FlowResult:
-        """Handle the initial step."""
-        errors: dict[str, str] = {}
-        if user_input is not None:
-            # Check for duplicates
-            await self.async_set_unique_id(DOMAIN)
-            self.hass.async_set_config_entry_flow_manager(DOMAIN, self)
-            
-            # Create the configuration entry
-            return self.async_create_entry(title="Esplinky UDP Listener", data=user_input)
-
-        # Show form
-        return self.async_show_form(
-            step_id="user", 
-            data_schema=DATA_SCHEMA, 
-            errors=errors
-        )
-
