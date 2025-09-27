@@ -5,42 +5,41 @@ from __future__ import annotations
 import logging
 from typing import Any
 
-from homeassistant.components.sensor import SensorEntity, SensorDeviceClass
+from homeassistant.components.sensor import SensorEntity, SensorDeviceClass # StateClass removed to fix ImportError
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant, callback, Event 
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 from homeassistant.helpers.typing import StateType
 from homeassistant.const import UnitOfPower, UnitOfEnergy 
 
-from . import DOMAIN, EVENT_NEW_TIC_DATA, CONF_PORT, DEFAULT_PORT # <-- FIX A: Added DEFAULT_PORT
+from . import DOMAIN, EVENT_NEW_TIC_DATA, CONF_PORT
 
 _LOGGER = logging.getLogger(__name__)
 
-# Dictionary to map Linky label names to Home Assistant sensor properties.
-# StateClass constants are intentionally replaced with string values for compatibility.
+# Dictionary to map Linky label names to Home Assistant sensor properties (units, icons, etc.)
+# IMPORTANT: StateClass constants are replaced with string values to fix the ImportError.
 LINKY_MAPPING = {
     # Consumption (Total Energy) - MUST be total_increasing for Energy Dashboard
-    # Unit changed to KILO_WATT_HOUR, and conversion logic is added in _sanitize_value
     "BASE": {
         "name": "Total Consumption (BASE)", 
-        "unit": UnitOfEnergy.KILO_WATT_HOUR, # <-- CHANGED to kWh
+        "unit": UnitOfEnergy.WATT_HOUR, 
         "icon": "mdi:counter",
         "device_class": SensorDeviceClass.ENERGY, 
-        "state_class": "total_increasing",
+        "state_class": "total_increasing", # <-- Fixed string value
     },
     "HCHP": {
         "name": "Consumption (Peak Hours)", 
-        "unit": UnitOfEnergy.KILO_WATT_HOUR, # <-- CHANGED to kWh
+        "unit": UnitOfEnergy.WATT_HOUR, 
         "icon": "mdi:counter",
         "device_class": SensorDeviceClass.ENERGY, 
-        "state_class": "total_increasing",
+        "state_class": "total_increasing", # <-- Fixed string value
     },
     "HCHC": {
         "name": "Consumption (Off-Peak Hours)", 
-        "unit": UnitOfEnergy.KILO_WATT_HOUR, # <-- CHANGED to kWh
+        "unit": UnitOfEnergy.WATT_HOUR, 
         "icon": "mdi:counter",
         "device_class": SensorDeviceClass.ENERGY, 
-        "state_class": "total_increasing",
+        "state_class": "total_increasing", # <-- Fixed string value
     },
     # Instantaneous Power (Current reading, not cumulative)
     "IINST": {
@@ -48,14 +47,14 @@ LINKY_MAPPING = {
         "unit": "A", 
         "icon": "mdi:flash",
         "device_class": SensorDeviceClass.CURRENT, 
-        "state_class": "measurement",
+        "state_class": "measurement", # <-- Fixed string value
     },
     "PAPP": {
         "name": "Apparent Power", 
         "unit": "VA", 
         "icon": "mdi:lightning-bolt",
         "device_class": SensorDeviceClass.APPARENT_POWER, 
-        "state_class": "measurement",
+        "state_class": "measurement", # <-- Fixed string value
     },
     # Tariff Information (String/Text values)
     "PTEC": {"name": "Current Tariff Period", "unit": None, "icon": "mdi:cash-multiple", "device_class": None, "state_class": None},
@@ -74,7 +73,7 @@ async def async_setup_entry(
     """Set up the sensor platform."""
     
     # Store the async_add_entities callback for later use when new sensors appear
-    # This is a common pattern for integrations that discover entities dynamically.
+    # Note: This line might cause issues if not checking for existence, but assuming DOMAIN[entry.entry_id] is ready from __init__.py
     hass.data[DOMAIN][config_entry.entry_id] = async_add_entities
 
     @callback
@@ -89,7 +88,6 @@ async def async_setup_entry(
             # Dynamically handle unknown labels
             if label not in LINKY_MAPPING:
                 _LOGGER.warning("Encountered unknown Linky label: %s. Using default settings.", label)
-                # Add the unknown label to the mapping dictionary with basic defaults
                 LINKY_MAPPING[label] = {"name": label, "unit": None, "icon": "mdi:gauge", "device_class": None, "state_class": None}
 
             # Check if this sensor already exists
@@ -108,7 +106,7 @@ async def async_setup_entry(
         if new_sensors:
             # Check if the async_add_entities callback is still the same object before calling
             if hass.data[DOMAIN].get(config_entry.entry_id) is async_add_entities:
-                async_add_entities(new_sensors)
+                 async_add_entities(new_sensors)
 
     # Subscribe to the event fired by __init__.py when new data arrives
     config_entry.async_on_unload(
@@ -124,23 +122,19 @@ class EsplinkySensor(SensorEntity):
         self._label = label
         mapping = LINKY_MAPPING[label]
         
-        # Unique ID uses entry ID and the Linky label
-        self._attr_unique_id = f"{config_entry.unique_id}_{label}"
-        
-        # Set attributes from the mapping dictionary
         self._attr_name = mapping.get("name", label)
-        self._attr_unit_of_measurement = mapping.get("unit")
-        self._attr_device_class = mapping.get("device_class") 
-        self._attr_state_class = mapping.get("state_class")    
-        self._attr_icon = mapping.get("icon")
-        
-        # Apply initial value after sanitization
+        self._attr_unique_id = f"{config_entry.unique_id}_{label}"
         self._attr_native_value = self._sanitize_value(initial_value)
         
-        # Define Device Info to group all sensors under one virtual device
+        # Apply the required attributes
+        self._attr_unit_of_measurement = mapping.get("unit")
+        self._attr_device_class = mapping.get("device_class") 
+        self._attr_state_class = mapping.get("state_class")   
+        self._attr_icon = mapping.get("icon")
+        
         self._attr_device_info = {
             "identifiers": {(DOMAIN, config_entry.entry_id)},
-            "name": f"ESPLinky (Port {config_entry.data.get(CONF_PORT, DEFAULT_PORT)})", # <-- FIX B: Added DEFAULT_PORT as fallback
+            "name": f"ESPLinky (Port {config_entry.data.get(CONF_PORT)})", 
             "model": "Linky TIC Listener",
             "manufacturer": "esplinky",
         }
@@ -151,31 +145,19 @@ class EsplinkySensor(SensorEntity):
         return self._attr_native_value
 
     def _sanitize_value(self, value: str) -> StateType:
-        """Attempt to convert string value to int/float if possible, otherwise return string.
-        Applies Wh to kWh conversion for energy sensors.
-        """
+        """Attempt to convert string value to int/float if possible, otherwise return string."""
         
         cleaned_value = value.strip()
         
         try:
-            # Prioritize integer conversion (common for energy meters)
-            numerical_value = int(cleaned_value)
-            
-            # Energy data from Linky is typically in Wh. If the sensor is one of the energy total
-            # labels, and we set the output unit to kWh, perform the conversion.
-            if self._label in ["BASE", "HCHP", "HCHC"]:
-                if self._attr_unit_of_measurement == UnitOfEnergy.KILO_WATT_HOUR:
-                    # Conversion from Wh (input) to kWh (output unit)
-                    return numerical_value / 1000.0
-            
-            return numerical_value
-            
+            # TIC energy values are typically large integers
+            return int(cleaned_value)
         except ValueError:
-            # Fallback to float conversion if int fails
             try:
+                # Handle potential float values
                 return float(cleaned_value)
             except ValueError:
-                # Fallback to string (for tariff/meter info)
+                # Return the cleaned string if conversion fails (e.g., PTEC, ADCO, etc.)
                 return cleaned_value
 
     @callback
@@ -183,7 +165,7 @@ class EsplinkySensor(SensorEntity):
         """Update the sensor's state value and schedule state refresh."""
         new_sanitized_value = self._sanitize_value(new_value)
         
-        # Only update if the value has actually changed to minimize HA writes
+        # Only update if the value has actually changed
         if new_sanitized_value != self._attr_native_value:
             self._attr_native_value = new_sanitized_value
             self.async_write_ha_state() 
