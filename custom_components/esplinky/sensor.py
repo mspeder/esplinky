@@ -5,7 +5,7 @@ from __future__ import annotations
 import logging
 from typing import Any
 
-from homeassistant.components.sensor import SensorEntity, SensorDeviceClass, StateClass # <-- IMPORTED
+from homeassistant.components.sensor import SensorEntity, SensorDeviceClass # Removed StateClass
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant, callback, Event 
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
@@ -17,44 +17,44 @@ from . import DOMAIN, EVENT_NEW_TIC_DATA, CONF_PORT
 _LOGGER = logging.getLogger(__name__)
 
 # Dictionary to map Linky label names to Home Assistant sensor properties (units, icons, etc.)
-# IMPORTANT: Added device_class and state_class for energy sensors to ensure HA recognizes them.
+# IMPORTANT: StateClass constants are replaced with string values to fix the ImportError.
 LINKY_MAPPING = {
     # Consumption (Total Energy) - MUST be total_increasing for Energy Dashboard
     "BASE": {
         "name": "Total Consumption (BASE)", 
         "unit": UnitOfEnergy.WATT_HOUR, 
         "icon": "mdi:counter",
-        "device_class": SensorDeviceClass.ENERGY, # <-- ADDED
-        "state_class": StateClass.TOTAL_INCREASING, # <-- ADDED
+        "device_class": SensorDeviceClass.ENERGY, 
+        "state_class": "total_increasing", # <-- FIXED: Used string value
     },
     "HCHP": {
         "name": "Consumption (Peak Hours)", 
         "unit": UnitOfEnergy.WATT_HOUR, 
         "icon": "mdi:counter",
-        "device_class": SensorDeviceClass.ENERGY, # <-- ADDED
-        "state_class": StateClass.TOTAL_INCREASING, # <-- ADDED
+        "device_class": SensorDeviceClass.ENERGY, 
+        "state_class": "total_increasing", # <-- FIXED: Used string value
     },
     "HCHC": {
         "name": "Consumption (Off-Peak Hours)", 
         "unit": UnitOfEnergy.WATT_HOUR, 
         "icon": "mdi:counter",
-        "device_class": SensorDeviceClass.ENERGY, # <-- ADDED
-        "state_class": StateClass.TOTAL_INCREASING, # <-- ADDED
+        "device_class": SensorDeviceClass.ENERGY, 
+        "state_class": "total_increasing", # <-- FIXED: Used string value
     },
     # Instantaneous Power (Current reading, not cumulative)
     "IINST": {
         "name": "Instantaneous Current (Total)", 
         "unit": "A", 
         "icon": "mdi:flash",
-        "device_class": SensorDeviceClass.CURRENT, # <-- Updated to appropriate class
-        "state_class": StateClass.MEASUREMENT,
+        "device_class": SensorDeviceClass.CURRENT, 
+        "state_class": "measurement", # <-- FIXED: Used string value
     },
     "PAPP": {
         "name": "Apparent Power", 
         "unit": "VA", 
         "icon": "mdi:lightning-bolt",
-        "device_class": SensorDeviceClass.APPARENT_POWER, # <-- Updated to appropriate class
-        "state_class": StateClass.MEASUREMENT,
+        "device_class": SensorDeviceClass.APPARENT_POWER, 
+        "state_class": "measurement", # <-- FIXED: Used string value
     },
     # Tariff Information (String/Text values)
     "PTEC": {"name": "Current Tariff Period", "unit": None, "icon": "mdi:cash-multiple", "device_class": None, "state_class": None},
@@ -128,8 +128,8 @@ class EsplinkySensor(SensorEntity):
         
         # Apply the required attributes
         self._attr_unit_of_measurement = mapping.get("unit")
-        self._attr_device_class = mapping.get("device_class") # <-- APPLIED
-        self._attr_state_class = mapping.get("state_class")   # <-- APPLIED
+        self._attr_device_class = mapping.get("device_class") 
+        self._attr_state_class = mapping.get("state_class")   
         self._attr_icon = mapping.get("icon")
         
         self._attr_device_info = {
