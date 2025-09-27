@@ -12,7 +12,7 @@ from homeassistant.helpers.entity_platform import AddEntitiesCallback
 from homeassistant.helpers.typing import StateType
 from homeassistant.const import UnitOfPower, UnitOfEnergy 
 
-from . import DOMAIN, EVENT_NEW_TIC_DATA, CONF_PORT
+from . import DOMAIN, EVENT_NEW_TIC_DATA, CONF_PORT, DEFAULT_PORT # <-- FIX A: Added DEFAULT_PORT
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -140,7 +140,7 @@ class EsplinkySensor(SensorEntity):
         # Define Device Info to group all sensors under one virtual device
         self._attr_device_info = {
             "identifiers": {(DOMAIN, config_entry.entry_id)},
-            "name": f"ESPLinky (Port {config_entry.data.get(CONF_PORT)})", 
+            "name": f"ESPLinky (Port {config_entry.data.get(CONF_PORT, DEFAULT_PORT)})", # <-- FIX B: Added DEFAULT_PORT as fallback
             "model": "Linky TIC Listener",
             "manufacturer": "esplinky",
         }
