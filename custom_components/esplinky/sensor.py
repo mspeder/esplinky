@@ -3,11 +3,11 @@
 from __future__ import annotations
 
 import logging
-from typing import Any # <--- FIX: Added missing import for 'Any'
+from typing import Any
 
 from homeassistant.components.sensor import SensorEntity
 from homeassistant.config_entries import ConfigEntry
-from homeassistant.core import HomeAssistant, callback
+from homeassistant.core import HomeAssistant, callback, Event # <-- Import Event object
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 from homeassistant.helpers.typing import StateType
 from homeassistant.const import UnitOfPower, UnitOfEnergy # Example units
@@ -47,10 +47,12 @@ async def async_setup_entry(
     hass.data[DOMAIN][config_entry.entry_id] = async_add_entities
 
     @callback
-    def handle_new_data(event: dict[str, Any]) -> None:
+    def handle_new_data(event: Event) -> None: # <-- CORRECTED: type hint is now Event
         """Handle new data event fired by the UDP listener."""
         new_sensors: list[EsplinkySensor] = []
-        tic_data: dict[str, str] = event["data"]
+        
+        # CORRECTED: Access the payload via event.data
+        tic_data: dict[str, str] = event.data["data"] 
 
         for label, value in tic_data.items():
             # Only create sensors for labels we have a mapping for, or if they are PAPP/IINST etc.
