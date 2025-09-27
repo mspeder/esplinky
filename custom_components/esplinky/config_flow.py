@@ -33,7 +33,7 @@ class EsplinkyConfigFlow(ConfigFlow, domain=DOMAIN):
             await self.async_set_unique_id(DOMAIN)
             
             # Create the configuration entry with the user-provided port
-            return self.async_create_entry(title="Esplinky UDP Listener", data=user_input)
+            return self.async_create_entry(title="ESPLinky", data=user_input)
 
         # Show form to configure the port
         return self.async_show_form(
