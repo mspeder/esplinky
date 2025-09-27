@@ -5,7 +5,7 @@ from __future__ import annotations
 import logging
 from typing import Any
 
-from homeassistant.components.sensor import SensorEntity, SensorDeviceClass # Removed StateClass
+from homeassistant.components.sensor import SensorEntity, SensorDeviceClass # StateClass removed to fix ImportError
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant, callback, Event 
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
@@ -25,21 +25,21 @@ LINKY_MAPPING = {
         "unit": UnitOfEnergy.WATT_HOUR, 
         "icon": "mdi:counter",
         "device_class": SensorDeviceClass.ENERGY, 
-        "state_class": "total_increasing", # <-- FIXED: Used string value
+        "state_class": "total_increasing", # <-- Fixed string value
     },
     "HCHP": {
         "name": "Consumption (Peak Hours)", 
         "unit": UnitOfEnergy.WATT_HOUR, 
         "icon": "mdi:counter",
         "device_class": SensorDeviceClass.ENERGY, 
-        "state_class": "total_increasing", # <-- FIXED: Used string value
+        "state_class": "total_increasing", # <-- Fixed string value
     },
     "HCHC": {
         "name": "Consumption (Off-Peak Hours)", 
         "unit": UnitOfEnergy.WATT_HOUR, 
         "icon": "mdi:counter",
         "device_class": SensorDeviceClass.ENERGY, 
-        "state_class": "total_increasing", # <-- FIXED: Used string value
+        "state_class": "total_increasing", # <-- Fixed string value
     },
     # Instantaneous Power (Current reading, not cumulative)
     "IINST": {
@@ -47,14 +47,14 @@ LINKY_MAPPING = {
         "unit": "A", 
         "icon": "mdi:flash",
         "device_class": SensorDeviceClass.CURRENT, 
-        "state_class": "measurement", # <-- FIXED: Used string value
+        "state_class": "measurement", # <-- Fixed string value
     },
     "PAPP": {
         "name": "Apparent Power", 
         "unit": "VA", 
         "icon": "mdi:lightning-bolt",
         "device_class": SensorDeviceClass.APPARENT_POWER, 
-        "state_class": "measurement", # <-- FIXED: Used string value
+        "state_class": "measurement", # <-- Fixed string value
     },
     # Tariff Information (String/Text values)
     "PTEC": {"name": "Current Tariff Period", "unit": None, "icon": "mdi:cash-multiple", "device_class": None, "state_class": None},
