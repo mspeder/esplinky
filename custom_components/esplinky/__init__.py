@@ -1,99 +1,127 @@
-"""The Esplinky UDP Listener integration for Home Assistant."""
+"""The ESPLinky integration."""
+
+from __future__ import annotations
 
 import asyncio
 import logging
+import socket
 from typing import Any
 
 from homeassistant.config_entries import ConfigEntry
+from homeassistant.const import CONF_PORT
 from homeassistant.core import HomeAssistant, callback
 from homeassistant.exceptions import ConfigEntryNotReady
+from homeassistant.helpers.device_registry import DeviceInfo
+from homeassistant.helpers.event import async_call_later
 
-from . import linky_parser # Import the TIC parsing utility
+from .linky_parser import parse_tic_frame
 
 _LOGGER = logging.getLogger(__name__)
 
 DOMAIN = "esplinky"
-PLATFORMS = ["sensor"]
-
-CONF_PORT = "port"
-DEFAULT_PORT = 8095
 EVENT_NEW_TIC_DATA = f"{DOMAIN}_new_data"
+PLATFORMS: list[str] = ["sensor"]
 
-class EsplinkyUDPProtocol(asyncio.DatagramProtocol):
-    """Protocol for receiving UDP datagrams."""
-
-    def __init__(self, hass: HomeAssistant) -> None:
-        """Initialize the protocol."""
-        self.hass = hass
-        self.transport = None
-
-    def connection_made(self, transport: asyncio.DatagramTransport) -> None:
-        """Called when a connection is made (socket is bound)."""
-        _LOGGER.debug("UDP Listener connection established")
-        self.transport = transport
-
-    def datagram_received(self, data: bytes, addr: tuple[str | Any, int]) -> None:
-        """Called when a datagram is received."""
-        _LOGGER.debug("Datagram received from %s:%s - length %d", addr[0], addr[1], len(data))
-        
-        # 1. Parse the raw frame
-        tic_data = linky_parser.parse_tic_frame(data)
-
-        if tic_data:
-            _LOGGER.info("Successfully parsed and validated %d Linky values. Firing HA event.", len(tic_data))
-            
-            # 2. Fire HA event with the validated data
-            # Sensors will subscribe to this event to update their state
-            self.hass.bus.fire(EVENT_NEW_TIC_DATA, {"data": tic_data})
-        else:
-            _LOGGER.warning("Received TIC frame contained no valid data or was empty.")
-
-    def connection_lost(self, exc: Exception | None) -> None:
-        """Called when the connection is lost."""
-        _LOGGER.warning("UDP Listener connection lost: %s", exc)
+# Default UDP port for Linky data
+DEFAULT_PORT = 8095
 
 async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
-    """Set up Esplinky from a config entry."""
+    """Set up ESPLinky from a config entry."""
+    
+    # Store configuration data (listener instance) in hass.data
+    hass.data.setdefault(DOMAIN, {})
+
     port = entry.data.get(CONF_PORT, DEFAULT_PORT)
     
-    # Store the component setup in the hass data store
-    hass.data.setdefault(DOMAIN, {})
+    listener = EsplinkyListener(hass, entry, port)
     
-    # Start the UDP Listener
     try:
-        # Create a UDP endpoint bound to all interfaces (0.0.0.0)
-        transport, protocol = await hass.loop.create_datagram_endpoint(
-            lambda: EsplinkyUDPProtocol(hass),
-            local_addr=('0.0.0.0', port)
-        )
-        hass.data[DOMAIN]["transport"] = transport
-        _LOGGER.info("Started UDP listener on port %d for Esplinky data.", port)
-        
+        await listener.async_start()
     except OSError as err:
-        _LOGGER.error("Failed to bind UDP socket on port %d: %s", port, err)
-        raise ConfigEntryNotReady(f"Failed to bind UDP socket on port {port}") from err
-        
-    # Set up the sensor platform using the list of platforms
-    # Corrected method name from 'async_forward_entry_setup' (singular) 
-    # to 'async_forward_entry_setups' (plural) to fix AttributeError.
+        _LOGGER.error("Failed to bind UDP socket on port %s: %s", port, err)
+        raise ConfigEntryNotReady(f"Failed to start UDP listener on port {port}") from err
+
+    hass.data[DOMAIN][entry.entry_id] = listener
+    
+    # Forward the setup to the sensor platform
     await hass.config_entries.async_forward_entry_setups(entry, PLATFORMS)
 
     return True
 
 async def async_unload_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     """Unload a config entry."""
-    # Unload the sensor platform
-    # The modern counterpart for unloading a list of platforms is async_unload_platforms.
     unload_ok = await hass.config_entries.async_unload_platforms(entry, PLATFORMS)
     
-    # Close the UDP transport
-    transport = hass.data[DOMAIN].pop("transport", None)
-    if transport:
-        transport.close()
-        _LOGGER.info("Closed UDP listener.")
-
-    # Clean up the domain data
-    if not hass.data[DOMAIN]:
-        hass.data.pop(DOMAIN)
-
+    if unload_ok and entry.entry_id in hass.data[DOMAIN]:
+        listener: EsplinkyListener = hass.data[DOMAIN].pop(entry.entry_id)
+        await listener.async_stop()
+    
     return unload_ok
+
+class EsplinkyListener:
+    """Handles the UDP socket listening and data processing."""
+    
+    def __init__(self, hass: HomeAssistant, entry: ConfigEntry, port: int) -> None:
+        """Initialize the UDP listener."""
+        self.hass = hass
+        self.entry = entry
+        self.port = port
+        self._transport = None
+        
+        self._device_info = DeviceInfo(
+            identifiers={(DOMAIN, entry.entry_id)},
+            name=f"ESPLinky (Port {port})", # <-- Updated name
+            model="Linky TIC Listener",
+            manufacturer="esplinky",
+        )
+
+    async def async_start(self) -> None:
+        """Start the UDP listener socket."""
+        loop = asyncio.get_event_loop()
+        # Bind to 0.0.0.0 (all interfaces)
+        self._transport, protocol = await loop.create_datagram_endpoint(
+            lambda: LinkyUDPProtocol(self.hass),
+            local_addr=('0.0.0.0', self.port)
+        )
+        _LOGGER.info("UDP listener started on port %s", self.port)
+
+    async def async_stop(self) -> None:
+        """Stop the UDP listener socket."""
+        if self._transport:
+            self._transport.close()
+            _LOGGER.info("UDP listener stopped on port %s", self.port)
+
+class LinkyUDPProtocol(asyncio.DatagramProtocol):
+    """Protocol to handle incoming UDP packets."""
+
+    def __init__(self, hass: HomeAssistant) -> None:
+        """Initialize the protocol."""
+        self.hass = hass
+
+    def connection_made(self, transport: asyncio.BaseTransport) -> None:
+        """Called when connection is made."""
+        self.transport = transport
+
+    def datagram_received(self, data: bytes, addr: tuple[str | Any, int]) -> None:
+        """Handle incoming UDP datagrams."""
+        ip, port = addr
+        _LOGGER.debug("Received datagram from %s:%s. Length: %d", ip, port, len(data))
+        
+        # Process the raw TIC frame
+        tic_data = parse_tic_frame(data)
+        
+        if tic_data:
+            _LOGGER.info("Successfully parsed and validated %d Linky values. Firing HA event.", len(tic_data))
+            
+            # Fire a Home Assistant event with the validated data
+            self.hass.bus.fire(EVENT_NEW_TIC_DATA, {"data": tic_data})
+        else:
+            _LOGGER.warning("Received UDP packet but could not extract any valid Linky data. Checksum errors or incorrect format.")
+
+    def error_received(self, exc: Exception) -> None:
+        """Handle error receiving datagram."""
+        _LOGGER.error("UDP Error received: %s", exc)
+
+    def connection_lost(self, exc: Exception | None) -> None:
+        """Called when connection is lost or closed."""
+        _LOGGER.warning("UDP listener connection lost: %s", exc)

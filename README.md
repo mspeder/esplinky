@@ -15,7 +15,7 @@ Install this repository as a Custom Repository in HACS.
 
 Restart Home Assistant.
 
-Go to Settings -> Devices & Services -> Add Integration and search for "Esplinky TIC UDP Listener".
+Go to Settings -> Devices & Services -> Add Integration and search for "ESPLinky".
 
 Configure the UDP port (default is 8095).
 

@@ -1,4 +1,4 @@
-"""Sensor platform for the Esplinky UDP Listener integration."""
+"""Sensor platform for the ESPLinky integration."""
 
 from __future__ import annotations
 
@@ -47,7 +47,7 @@ async def async_setup_entry(
     hass.data[DOMAIN][config_entry.entry_id] = async_add_entities
 
     @callback
-    def handle_new_data(event: Event) -> None: # <-- CORRECTED: type hint is now Event
+    def handle_new_data(event: Event) -> None: 
         """Handle new data event fired by the UDP listener."""
         new_sensors: list[EsplinkySensor] = []
         
@@ -95,7 +95,7 @@ class EsplinkySensor(SensorEntity):
         self._attr_icon = LINKY_MAPPING[label].get("icon")
         self._attr_device_info = {
             "identifiers": {(DOMAIN, config_entry.entry_id)},
-            "name": f"Esplinky UDP Listener (Port {config_entry.data.get(CONF_PORT)})",
+            "name": f"ESPLinky (Port {config_entry.data.get(CONF_PORT)})", # <-- Updated name
             "model": "Linky TIC Listener",
             "manufacturer": "esplinky",
         }
@@ -107,16 +107,21 @@ class EsplinkySensor(SensorEntity):
 
     def _sanitize_value(self, value: str) -> StateType:
         """Attempt to convert string value to int/float if possible, otherwise return string."""
+        
+        # Strip leading/trailing whitespace/control characters first, 
+        # as Home Assistant requires a Python int/float for numeric sensors.
+        cleaned_value = value.strip()
+        
         try:
             # TIC values are often large integers (e.g., Wh)
-            return int(value)
+            return int(cleaned_value)
         except ValueError:
             try:
                 # Handle potential float values (less common in standard TIC)
-                return float(value)
+                return float(cleaned_value)
             except ValueError:
-                # Return the string if conversion fails (e.g., PTEC, ADCO)
-                return value.strip()
+                # Return the cleaned string if conversion fails (e.g., PTEC, ADCO, etc.)
+                return cleaned_value
 
     @callback
     def update_state_value(self, new_value: str) -> None:
