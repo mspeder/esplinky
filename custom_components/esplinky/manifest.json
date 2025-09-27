@@ -1,7 +1,7 @@
 {
   "domain": "esplinky",
   "name": "ESPLinky",
-  "version": "1.0.3",
+  "version": "1.0.4",
   "codeowners": ["@mspeder"],
   "dependencies": [],
   "documentation": "https://raw.githubusercontent.com/mspeder/esplinky/refs/heads/main/README.md",
