@@ -5,32 +5,61 @@ from __future__ import annotations
 import logging
 from typing import Any
 
-from homeassistant.components.sensor import SensorEntity
+from homeassistant.components.sensor import SensorEntity, SensorDeviceClass, StateClass # <-- IMPORTED
 from homeassistant.config_entries import ConfigEntry
-from homeassistant.core import HomeAssistant, callback, Event # <-- Import Event object
+from homeassistant.core import HomeAssistant, callback, Event 
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 from homeassistant.helpers.typing import StateType
-from homeassistant.const import UnitOfPower, UnitOfEnergy # Example units
+from homeassistant.const import UnitOfPower, UnitOfEnergy 
 
 from . import DOMAIN, EVENT_NEW_TIC_DATA, CONF_PORT
 
 _LOGGER = logging.getLogger(__name__)
 
 # Dictionary to map Linky label names to Home Assistant sensor properties (units, icons, etc.)
-# This mapping is crucial for making the data meaningful in HA.
+# IMPORTANT: Added device_class and state_class for energy sensors to ensure HA recognizes them.
 LINKY_MAPPING = {
-    # Consumption (Total Energy)
-    "BASE": {"name": "Total Consumption (BASE)", "unit": UnitOfEnergy.WATT_HOUR, "icon": "mdi:counter"},
-    "HCHP": {"name": "Consumption (Peak Hours)", "unit": UnitOfEnergy.WATT_HOUR, "icon": "mdi:counter"},
-    "HCHC": {"name": "Consumption (Off-Peak Hours)", "unit": UnitOfEnergy.WATT_HOUR, "icon": "mdi:counter"},
-    # Instantaneous Power
-    "IINST": {"name": "Instantaneous Current (Total)", "unit": "A", "icon": "mdi:flash"},
-    "PAPP": {"name": "Apparent Power", "unit": "VA", "icon": "mdi:lightning-bolt"},
-    # Tariff Information
-    "PTEC": {"name": "Current Tariff Period", "unit": None, "icon": "mdi:cash-multiple"},
-    # Other important values (adjust as needed for your specific Linky meter)
-    "ADCO": {"name": "Meter Address", "unit": None, "icon": "mdi:identifier"},
-    "OPTARIF": {"name": "Tariff Option", "unit": None, "icon": "mdi:tag"},
+    # Consumption (Total Energy) - MUST be total_increasing for Energy Dashboard
+    "BASE": {
+        "name": "Total Consumption (BASE)", 
+        "unit": UnitOfEnergy.WATT_HOUR, 
+        "icon": "mdi:counter",
+        "device_class": SensorDeviceClass.ENERGY, # <-- ADDED
+        "state_class": StateClass.TOTAL_INCREASING, # <-- ADDED
+    },
+    "HCHP": {
+        "name": "Consumption (Peak Hours)", 
+        "unit": UnitOfEnergy.WATT_HOUR, 
+        "icon": "mdi:counter",
+        "device_class": SensorDeviceClass.ENERGY, # <-- ADDED
+        "state_class": StateClass.TOTAL_INCREASING, # <-- ADDED
+    },
+    "HCHC": {
+        "name": "Consumption (Off-Peak Hours)", 
+        "unit": UnitOfEnergy.WATT_HOUR, 
+        "icon": "mdi:counter",
+        "device_class": SensorDeviceClass.ENERGY, # <-- ADDED
+        "state_class": StateClass.TOTAL_INCREASING, # <-- ADDED
+    },
+    # Instantaneous Power (Current reading, not cumulative)
+    "IINST": {
+        "name": "Instantaneous Current (Total)", 
+        "unit": "A", 
+        "icon": "mdi:flash",
+        "device_class": SensorDeviceClass.CURRENT, # <-- Updated to appropriate class
+        "state_class": StateClass.MEASUREMENT,
+    },
+    "PAPP": {
+        "name": "Apparent Power", 
+        "unit": "VA", 
+        "icon": "mdi:lightning-bolt",
+        "device_class": SensorDeviceClass.APPARENT_POWER, # <-- Updated to appropriate class
+        "state_class": StateClass.MEASUREMENT,
+    },
+    # Tariff Information (String/Text values)
+    "PTEC": {"name": "Current Tariff Period", "unit": None, "icon": "mdi:cash-multiple", "device_class": None, "state_class": None},
+    "ADCO": {"name": "Meter Address", "unit": None, "icon": "mdi:identifier", "device_class": None, "state_class": None},
+    "OPTARIF": {"name": "Tariff Option", "unit": None, "icon": "mdi:tag", "device_class": None, "state_class": None},
 }
 
 # In-memory store for currently tracked sensors
@@ -44,6 +73,7 @@ async def async_setup_entry(
     """Set up the sensor platform."""
     
     # Store the async_add_entities callback for later use when new sensors appear
+    # Note: This line might cause issues if not checking for existence, but assuming DOMAIN[entry.entry_id] is ready from __init__.py
     hass.data[DOMAIN][config_entry.entry_id] = async_add_entities
 
     @callback
@@ -51,14 +81,14 @@ async def async_setup_entry(
         """Handle new data event fired by the UDP listener."""
         new_sensors: list[EsplinkySensor] = []
         
-        # CORRECTED: Access the payload via event.data
+        # Access the payload via event.data
         tic_data: dict[str, str] = event.data["data"] 
 
         for label, value in tic_data.items():
-            # Only create sensors for labels we have a mapping for, or if they are PAPP/IINST etc.
+            # Dynamically handle unknown labels
             if label not in LINKY_MAPPING:
-                # Dynamically add mapping for unknown labels (e.g., custom data)
-                LINKY_MAPPING[label] = {"name": label, "unit": None, "icon": "mdi:gauge"}
+                _LOGGER.warning("Encountered unknown Linky label: %s. Using default settings.", label)
+                LINKY_MAPPING[label] = {"name": label, "unit": None, "icon": "mdi:gauge", "device_class": None, "state_class": None}
 
             # Check if this sensor already exists
             if label not in TRACKED_SENSORS:
@@ -74,7 +104,9 @@ async def async_setup_entry(
 
         # Add any newly created sensors to Home Assistant
         if new_sensors:
-            async_add_entities(new_sensors)
+            # Check if the async_add_entities callback is still the same object before calling
+            if hass.data[DOMAIN].get(config_entry.entry_id) is async_add_entities:
+                 async_add_entities(new_sensors)
 
     # Subscribe to the event fired by __init__.py when new data arrives
     config_entry.async_on_unload(
@@ -88,14 +120,21 @@ class EsplinkySensor(SensorEntity):
     def __init__(self, config_entry: ConfigEntry, label: str, initial_value: Any) -> None:
         """Initialize the sensor."""
         self._label = label
-        self._attr_name = LINKY_MAPPING[label].get("name", label)
+        mapping = LINKY_MAPPING[label]
+        
+        self._attr_name = mapping.get("name", label)
         self._attr_unique_id = f"{config_entry.unique_id}_{label}"
         self._attr_native_value = self._sanitize_value(initial_value)
-        self._attr_unit_of_measurement = LINKY_MAPPING[label].get("unit")
-        self._attr_icon = LINKY_MAPPING[label].get("icon")
+        
+        # Apply the required attributes
+        self._attr_unit_of_measurement = mapping.get("unit")
+        self._attr_device_class = mapping.get("device_class") # <-- APPLIED
+        self._attr_state_class = mapping.get("state_class")   # <-- APPLIED
+        self._attr_icon = mapping.get("icon")
+        
         self._attr_device_info = {
             "identifiers": {(DOMAIN, config_entry.entry_id)},
-            "name": f"ESPLinky (Port {config_entry.data.get(CONF_PORT)})", # <-- Updated name
+            "name": f"ESPLinky (Port {config_entry.data.get(CONF_PORT)})", 
             "model": "Linky TIC Listener",
             "manufacturer": "esplinky",
         }
@@ -108,16 +147,14 @@ class EsplinkySensor(SensorEntity):
     def _sanitize_value(self, value: str) -> StateType:
         """Attempt to convert string value to int/float if possible, otherwise return string."""
         
-        # Strip leading/trailing whitespace/control characters first, 
-        # as Home Assistant requires a Python int/float for numeric sensors.
         cleaned_value = value.strip()
         
         try:
-            # TIC values are often large integers (e.g., Wh)
+            # TIC energy values are typically large integers
             return int(cleaned_value)
         except ValueError:
             try:
-                # Handle potential float values (less common in standard TIC)
+                # Handle potential float values
                 return float(cleaned_value)
             except ValueError:
                 # Return the cleaned string if conversion fails (e.g., PTEC, ADCO, etc.)
@@ -131,5 +168,5 @@ class EsplinkySensor(SensorEntity):
         # Only update if the value has actually changed
         if new_sanitized_value != self._attr_native_value:
             self._attr_native_value = new_sanitized_value
-            self.async_write_ha_state() # Notify HA of the state change
+            self.async_write_ha_state() 
             _LOGGER.debug("Sensor %s updated state to: %s", self._label, new_sanitized_value)
