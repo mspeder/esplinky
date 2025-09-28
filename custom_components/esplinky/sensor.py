@@ -10,35 +10,35 @@ from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant, callback, Event 
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 from homeassistant.helpers.typing import StateType
-# FIX: ADD UnitOfApparentPower for the 'VA' unit
-from homeassistant.const import UnitOfPower, UnitOfEnergy, UnitOfApparentPower 
+# Import constants for energy units and ensure the string literals are available for others
+from homeassistant.const import UnitOfPower, UnitOfEnergy 
 
 from . import DOMAIN, EVENT_NEW_TIC_DATA, CONF_PORT
 
 _LOGGER = logging.getLogger(__name__)
 
 # Dictionary to map Linky label names to Home Assistant sensor properties (units, icons, etc.)
-# All Consumption sensors (BASE, HCHP, HCHC) are already correctly configured for the Energy Dashboard 
-# with 'state_class': 'total_increasing' and 'unit': UnitOfEnergy.WATT_HOUR ('Wh').
+# FIX: Using string literals for 'A' and 'VA' to avoid errors if constants fail to resolve.
+# FIX: Added ISOUSC, IMAX, HHPHC, MOTDETAT to eliminate "unknown Linky label" warnings.
 LINKY_MAPPING = {
     # Consumption (Total Energy) - MUST be total_increasing for Energy Dashboard
     "BASE": {
         "name": "Total Consumption (BASE)", 
-        "unit": UnitOfEnergy.WATT_HOUR, 
+        "unit": UnitOfEnergy.WATT_HOUR, # 'Wh'
         "icon": "mdi:counter",
         "device_class": SensorDeviceClass.ENERGY, 
         "state_class": "total_increasing", 
     },
     "HCHP": {
         "name": "Consumption (Peak Hours)", 
-        "unit": UnitOfEnergy.WATT_HOUR, 
+        "unit": UnitOfEnergy.WATT_HOUR, # 'Wh'
         "icon": "mdi:counter",
         "device_class": SensorDeviceClass.ENERGY, 
         "state_class": "total_increasing", 
     },
     "HCHC": {
         "name": "Consumption (Off-Peak Hours)", 
-        "unit": UnitOfEnergy.WATT_HOUR, 
+        "unit": UnitOfEnergy.WATT_HOUR, # 'Wh'
         "icon": "mdi:counter",
         "device_class": SensorDeviceClass.ENERGY, 
         "state_class": "total_increasing", 
@@ -46,15 +46,14 @@ LINKY_MAPPING = {
     # Instantaneous Power (Current reading, not cumulative)
     "IINST": {
         "name": "Instantaneous Current (Total)", 
-        "unit": "A", 
+        "unit": "A", # FIX: Use string literal
         "icon": "mdi:flash",
         "device_class": SensorDeviceClass.CURRENT, 
         "state_class": "measurement", 
     },
     "PAPP": {
         "name": "Apparent Power", 
-        # UPDATE: Use imported constant for 'VA' unit if available
-        "unit": UnitOfApparentPower.VOLT_AMPERE, 
+        "unit": "VA", # FIX: Use string literal
         "icon": "mdi:lightning-bolt",
         "device_class": SensorDeviceClass.APPARENT_POWER, 
         "state_class": "measurement", 
@@ -63,6 +62,36 @@ LINKY_MAPPING = {
     "PTEC": {"name": "Current Tariff Period", "unit": None, "icon": "mdi:cash-multiple", "device_class": None, "state_class": None},
     "ADCO": {"name": "Meter Address", "unit": None, "icon": "mdi:identifier", "device_class": None, "state_class": None},
     "OPTARIF": {"name": "Tariff Option", "unit": None, "icon": "mdi:tag", "device_class": None, "state_class": None},
+    
+    # NEW: Added known but previously undefined Linky labels
+    "ISOUSC": {
+        "name": "Subscribed Current", 
+        "unit": "A", 
+        "icon": "mdi:flash",
+        "device_class": SensorDeviceClass.CURRENT, 
+        "state_class": None,
+    },
+    "IMAX": {
+        "name": "Max Current Called", 
+        "unit": "A", 
+        "icon": "mdi:flash",
+        "device_class": SensorDeviceClass.CURRENT, 
+        "state_class": "measurement", 
+    },
+    "HHPHC": {
+        "name": "Hour/Day Code", 
+        "unit": None, 
+        "icon": "mdi:clock-outline", 
+        "device_class": None, 
+        "state_class": None,
+    },
+    "MOTDETAT": {
+        "name": "Meter Status", 
+        "unit": None, 
+        "icon": "mdi:alert-circle-outline", 
+        "device_class": None, 
+        "state_class": None,
+    },
 }
 
 # In-memory store for currently tracked sensors
@@ -87,7 +116,7 @@ async def async_setup_entry(
         tic_data: dict[str, str] = event.data["data"] 
 
         for label, value in tic_data.items():
-            # Dynamically handle unknown labels
+            # Dynamically handle truly unknown labels (those not in the expanded mapping)
             if label not in LINKY_MAPPING:
                 _LOGGER.warning("Encountered unknown Linky label: %s. Using default settings.", label)
                 # Ensure unknown labels are added to the mapping before sensor creation
@@ -126,7 +155,6 @@ class EsplinkySensor(SensorEntity):
         mapping = LINKY_MAPPING[label]
         
         self._attr_name = mapping.get("name", label)
-        # Unique ID is essential for tracking and Energy Dashboard
         self._attr_unique_id = f"{config_entry.unique_id}_{label}"
         self._attr_native_value = self._sanitize_value(initial_value)
         
@@ -159,7 +187,7 @@ class EsplinkySensor(SensorEntity):
             return int(cleaned_value)
         except ValueError:
             try:
-                # Handle potential float values (less common in TIC but good practice)
+                # Handle potential float values
                 return float(cleaned_value)
             except ValueError:
                 # Return the cleaned string if conversion fails (e.g., PTEC, ADCO, etc.)
@@ -173,6 +201,5 @@ class EsplinkySensor(SensorEntity):
         # Only update if the value has actually changed
         if new_sanitized_value != self._attr_native_value:
             self._attr_native_value = new_sanitized_value
-            # Notify Home Assistant to update the state
             self.async_write_ha_state() 
             _LOGGER.debug("Sensor %s updated state to: %s", self._label, new_sanitized_value)
