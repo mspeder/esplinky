@@ -10,75 +10,88 @@ from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant, callback, Event 
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 from homeassistant.helpers.typing import StateType
-# The following constants are now imported but not used in the mapping to guarantee unit strings resolve correctly.
-from homeassistant.const import UnitOfPower, UnitOfEnergy 
 
 from . import DOMAIN, EVENT_NEW_TIC_DATA, CONF_PORT
 
 _LOGGER = logging.getLogger(__name__)
 
 # Dictionary to map Linky label names to Home Assistant sensor properties (units, icons, etc.)
-# FIX: All units are replaced with string literals ('Wh', 'A', 'VA') to guarantee they resolve correctly 
-# and eliminate the 'unit of measurement None' warnings.
 LINKY_MAPPING = {
     # Consumption (Total Energy) - Configured for Energy Dashboard
     "BASE": {
         "name": "Total Consumption (BASE)", 
-        "unit": "Wh", # FIX: String literal 'Wh'
+        "unit": "Wh",
         "icon": "mdi:counter",
         "device_class": SensorDeviceClass.ENERGY, 
         "state_class": "total_increasing", 
     },
     "HCHP": {
         "name": "Consumption (Peak Hours)", 
-        "unit": "Wh", # FIX: String literal 'Wh'
+        "unit": "Wh",
         "icon": "mdi:counter",
         "device_class": SensorDeviceClass.ENERGY, 
         "state_class": "total_increasing", 
     },
     "HCHC": {
         "name": "Consumption (Off-Peak Hours)", 
-        "unit": "Wh", # FIX: String literal 'Wh'
+        "unit": "Wh",
         "icon": "mdi:counter",
         "device_class": SensorDeviceClass.ENERGY, 
         "state_class": "total_increasing", 
     },
-    # Instantaneous Power (Current reading, not cumulative)
+    # Instantaneous Power and Current
     "IINST": {
         "name": "Instantaneous Current (Total)", 
-        "unit": "A", # String literal 'A'
+        "unit": "A",
         "icon": "mdi:flash",
         "device_class": SensorDeviceClass.CURRENT, 
         "state_class": "measurement", 
     },
     "PAPP": {
         "name": "Apparent Power", 
-        "unit": "VA", # String literal 'VA'
+        "unit": "VA",
         "icon": "mdi:lightning-bolt",
         "device_class": SensorDeviceClass.APPARENT_POWER, 
         "state_class": "measurement", 
     },
-    # Tariff and Configuration Information (Added to eliminate "unknown label" warnings)
-    "PTEC": {"name": "Current Tariff Period", "unit": None, "icon": "mdi:cash-multiple", "device_class": None, "state_class": None},
-    "ADCO": {"name": "Meter Address", "unit": None, "icon": "mdi:identifier", "device_class": None, "state_class": None},
-    "OPTARIF": {"name": "Tariff Option", "unit": None, "icon": "mdi:tag", "device_class": None, "state_class": None},
-    
-    # NEW: Linky labels configured for current (A) unit
+    # Tariff and Configuration Information
+    "PTEC": {
+        "name": "Current Tariff Period", 
+        "unit": None, 
+        "icon": "mdi:cash-multiple", 
+        "device_class": None, 
+        "state_class": None
+    },
+    "ADCO": {
+        "name": "Meter Address", 
+        "unit": None, 
+        "icon": "mdi:identifier", 
+        "device_class": None, 
+        "state_class": None
+    },
+    "OPTARIF": {
+        "name": "Tariff Option", 
+        "unit": None, 
+        "icon": "mdi:tag", 
+        "device_class": None, 
+        "state_class": None
+    },
+    # Current-related sensors
     "ISOUSC": {
         "name": "Subscribed Current", 
-        "unit": "A", # String literal 'A'
+        "unit": "A",
         "icon": "mdi:flash",
         "device_class": SensorDeviceClass.CURRENT, 
         "state_class": None,
     },
     "IMAX": {
         "name": "Max Current Called", 
-        "unit": "A", # String literal 'A'
+        "unit": "A",
         "icon": "mdi:flash",
         "device_class": SensorDeviceClass.CURRENT, 
         "state_class": "measurement", 
     },
-    # NEW: Linky labels configured as plain text/numeric sensors
+    # Additional sensors
     "HHPHC": {
         "name": "Hour/Day Code", 
         "unit": None, 
@@ -121,7 +134,13 @@ async def async_setup_entry(
             if label not in LINKY_MAPPING:
                 _LOGGER.warning("Encountered unknown Linky label: %s. Using default settings.", label)
                 # Ensure unknown labels are added to the mapping before sensor creation
-                LINKY_MAPPING[label] = {"name": label, "unit": None, "icon": "mdi:gauge", "device_class": None, "state_class": None}
+                LINKY_MAPPING[label] = {
+                    "name": label, 
+                    "unit": None, 
+                    "icon": "mdi:gauge", 
+                    "device_class": None, 
+                    "state_class": None
+                }
 
             # Check if this sensor already exists
             if label not in TRACKED_SENSORS:
@@ -155,16 +174,20 @@ class EsplinkySensor(SensorEntity):
         self._label = label
         mapping = LINKY_MAPPING[label]
         
-        self._attr_name = mapping.get("name", label)
+        self._attr_name = mapping["name"]
         self._attr_unique_id = f"{config_entry.unique_id}_{label}"
         self._attr_native_value = self._sanitize_value(initial_value)
         
-        # Apply the required attributes
-        self._attr_unit_of_measurement = mapping.get("unit")
-        self._attr_device_class = mapping.get("device_class") 
-        # state_class is REQUIRED for long-term statistics (LTS) and Energy Dashboard
-        self._attr_state_class = mapping.get("state_class")   
-        self._attr_icon = mapping.get("icon")
+        # Apply the required attributes - ensure units are properly set
+        unit = mapping["unit"]
+        self._attr_native_unit_of_measurement = unit
+        self._attr_device_class = mapping["device_class"] 
+        self._attr_state_class = mapping["state_class"]   
+        self._attr_icon = mapping["icon"]
+        
+        # Debug logging to verify units are set correctly
+        _LOGGER.debug("Creating sensor %s with unit: %s, device_class: %s", 
+                     label, unit, mapping["device_class"])
         
         self._attr_device_info = {
             "identifiers": {(DOMAIN, config_entry.entry_id)},
@@ -177,6 +200,11 @@ class EsplinkySensor(SensorEntity):
     def native_value(self) -> StateType:
         """Return the state of the sensor."""
         return self._attr_native_value
+
+    @property
+    def native_unit_of_measurement(self) -> str | None:
+        """Return the unit of measurement."""
+        return self._attr_native_unit_of_measurement
 
     def _sanitize_value(self, value: str) -> StateType:
         """Attempt to convert string value to int/float if possible, otherwise return string."""
