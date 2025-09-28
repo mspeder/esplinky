@@ -5,19 +5,21 @@ from __future__ import annotations
 import logging
 from typing import Any
 
-from homeassistant.components.sensor import SensorEntity, SensorDeviceClass # StateClass removed to fix ImportError
+from homeassistant.components.sensor import SensorEntity, SensorDeviceClass 
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant, callback, Event 
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 from homeassistant.helpers.typing import StateType
-from homeassistant.const import UnitOfPower, UnitOfEnergy 
+# FIX: ADD UnitOfApparentPower for the 'VA' unit
+from homeassistant.const import UnitOfPower, UnitOfEnergy, UnitOfApparentPower 
 
 from . import DOMAIN, EVENT_NEW_TIC_DATA, CONF_PORT
 
 _LOGGER = logging.getLogger(__name__)
 
 # Dictionary to map Linky label names to Home Assistant sensor properties (units, icons, etc.)
-# IMPORTANT: StateClass constants are replaced with string values to fix the ImportError.
+# All Consumption sensors (BASE, HCHP, HCHC) are already correctly configured for the Energy Dashboard 
+# with 'state_class': 'total_increasing' and 'unit': UnitOfEnergy.WATT_HOUR ('Wh').
 LINKY_MAPPING = {
     # Consumption (Total Energy) - MUST be total_increasing for Energy Dashboard
     "BASE": {
@@ -25,21 +27,21 @@ LINKY_MAPPING = {
         "unit": UnitOfEnergy.WATT_HOUR, 
         "icon": "mdi:counter",
         "device_class": SensorDeviceClass.ENERGY, 
-        "state_class": "total_increasing", # <-- Fixed string value
+        "state_class": "total_increasing", 
     },
     "HCHP": {
         "name": "Consumption (Peak Hours)", 
         "unit": UnitOfEnergy.WATT_HOUR, 
         "icon": "mdi:counter",
         "device_class": SensorDeviceClass.ENERGY, 
-        "state_class": "total_increasing", # <-- Fixed string value
+        "state_class": "total_increasing", 
     },
     "HCHC": {
         "name": "Consumption (Off-Peak Hours)", 
         "unit": UnitOfEnergy.WATT_HOUR, 
         "icon": "mdi:counter",
         "device_class": SensorDeviceClass.ENERGY, 
-        "state_class": "total_increasing", # <-- Fixed string value
+        "state_class": "total_increasing", 
     },
     # Instantaneous Power (Current reading, not cumulative)
     "IINST": {
@@ -47,14 +49,15 @@ LINKY_MAPPING = {
         "unit": "A", 
         "icon": "mdi:flash",
         "device_class": SensorDeviceClass.CURRENT, 
-        "state_class": "measurement", # <-- Fixed string value
+        "state_class": "measurement", 
     },
     "PAPP": {
         "name": "Apparent Power", 
-        "unit": "VA", 
+        # UPDATE: Use imported constant for 'VA' unit if available
+        "unit": UnitOfApparentPower.VOLT_AMPERE, 
         "icon": "mdi:lightning-bolt",
         "device_class": SensorDeviceClass.APPARENT_POWER, 
-        "state_class": "measurement", # <-- Fixed string value
+        "state_class": "measurement", 
     },
     # Tariff Information (String/Text values)
     "PTEC": {"name": "Current Tariff Period", "unit": None, "icon": "mdi:cash-multiple", "device_class": None, "state_class": None},
@@ -73,7 +76,6 @@ async def async_setup_entry(
     """Set up the sensor platform."""
     
     # Store the async_add_entities callback for later use when new sensors appear
-    # Note: This line might cause issues if not checking for existence, but assuming DOMAIN[entry.entry_id] is ready from __init__.py
     hass.data[DOMAIN][config_entry.entry_id] = async_add_entities
 
     @callback
@@ -88,6 +90,7 @@ async def async_setup_entry(
             # Dynamically handle unknown labels
             if label not in LINKY_MAPPING:
                 _LOGGER.warning("Encountered unknown Linky label: %s. Using default settings.", label)
+                # Ensure unknown labels are added to the mapping before sensor creation
                 LINKY_MAPPING[label] = {"name": label, "unit": None, "icon": "mdi:gauge", "device_class": None, "state_class": None}
 
             # Check if this sensor already exists
@@ -123,12 +126,14 @@ class EsplinkySensor(SensorEntity):
         mapping = LINKY_MAPPING[label]
         
         self._attr_name = mapping.get("name", label)
+        # Unique ID is essential for tracking and Energy Dashboard
         self._attr_unique_id = f"{config_entry.unique_id}_{label}"
         self._attr_native_value = self._sanitize_value(initial_value)
         
         # Apply the required attributes
         self._attr_unit_of_measurement = mapping.get("unit")
         self._attr_device_class = mapping.get("device_class") 
+        # state_class is REQUIRED for long-term statistics (LTS) and Energy Dashboard
         self._attr_state_class = mapping.get("state_class")   
         self._attr_icon = mapping.get("icon")
         
@@ -154,7 +159,7 @@ class EsplinkySensor(SensorEntity):
             return int(cleaned_value)
         except ValueError:
             try:
-                # Handle potential float values
+                # Handle potential float values (less common in TIC but good practice)
                 return float(cleaned_value)
             except ValueError:
                 # Return the cleaned string if conversion fails (e.g., PTEC, ADCO, etc.)
@@ -168,5 +173,6 @@ class EsplinkySensor(SensorEntity):
         # Only update if the value has actually changed
         if new_sanitized_value != self._attr_native_value:
             self._attr_native_value = new_sanitized_value
+            # Notify Home Assistant to update the state
             self.async_write_ha_state() 
             _LOGGER.debug("Sensor %s updated state to: %s", self._label, new_sanitized_value)
