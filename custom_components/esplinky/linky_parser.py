@@ -12,10 +12,22 @@ def validate_checksum(line: str) -> bool:
     if len(line) < 3:
         _LOGGER.debug("Checksum validation failed: Line too short (%d chars): '%s'", len(line), repr(line))
         return False
-        
+    
+    # Check if line has the expected format with space before checksum
     if line[-2] != ' ':
-        _LOGGER.debug("Checksum validation failed: No space before checksum. Line: '%s', Last 2 chars: '%s'", 
-                     repr(line), repr(line[-2:]))
+        # Special handling for lines that might be truncated or malformed
+        _LOGGER.warning(
+            "Checksum validation failed: No space before checksum\n"
+            "  Line: '%s'\n"
+            "  Length: %d chars\n"
+            "  Last 5 chars: '%s'\n"
+            "  ASCII codes of last 5 chars: %s\n"
+            "  Expected format: 'LABEL VALUE CHECKSUM' (space before last char)",
+            line,
+            len(line),
+            repr(line[-5:]) if len(line) >= 5 else repr(line),
+            [ord(c) for c in line[-5:]] if len(line) >= 5 else [ord(c) for c in line]
+        )
         return False
         
     # 2. Extract components for debugging
@@ -115,6 +127,11 @@ def parse_tic_frame(raw_frame: bytes) -> dict[str, str]:
     
     _LOGGER.debug("Split frame into %d non-empty lines", len(lines))
     
+    # Log each line before processing to help identify malformed lines
+    for i, line in enumerate(lines):
+        _LOGGER.debug("Line %d: length=%d, content='%s', last_5_chars='%s'", 
+                     i+1, len(line), line, repr(line[-5:]) if len(line) >= 5 else repr(line))
+    
     extracted_data = {}
     valid_lines = 0
     invalid_lines = 0
@@ -124,22 +141,26 @@ def parse_tic_frame(raw_frame: bytes) -> dict[str, str]:
             continue
             
         _LOGGER.debug("Processing line %d: %s", i+1, repr(line))
-            
-        # 1. Validate Checksum
-        if not validate_checksum(line):
+        
+        # Check for obviously malformed lines before checksum validation
+        if not line or len(line) < 3:
+            _LOGGER.warning("Skipping malformed line %d: too short (%d chars): '%s'", i+1, len(line), line)
             invalid_lines += 1
-            # Log failure but continue processing other lines
-            _LOGGER.warning("Invalid checksum for TIC line %d: '%s'", i+1, line)
             continue
             
-        valid_lines += 1
-        
-        # 2. Extract Label and Value
-        # A valid line looks like: ADCO 01234567890C
-        
-        # Strip the checksum and the preceding space
-        data_part = line[:-2]
-        
+        # Check if line ends with multiple spaces (possible transmission issue)
+        if line.endswith('  ') or line.endswith('\t'):
+            _LOGGER.warning("Line %d has suspicious trailing whitespace: '%s' (may be truncated)", i+1, repr(line))
+            
+        # 1. Try to extract Label and Value first (works for both valid and invalid checksums)
+        # Determine data part based on line structure
+        if len(line) >= 3 and line[-2] == ' ':
+            # Standard format: LABEL VALUE CHECKSUM
+            data_part = line[:-2]
+        else:
+            # Malformed line (no checksum): LABEL VALUE
+            data_part = line
+            
         # Split by space. Historic mode uses a single space delimiter.
         parts = data_part.split(' ', 1)
         
@@ -147,16 +168,52 @@ def parse_tic_frame(raw_frame: bytes) -> dict[str, str]:
             label = parts[0].strip()
             value = parts[1].strip()
             
+            # Clean trailing dots from specific labels that commonly have them
+            if label in ('PTEC', 'OPTARIF'):
+                original_value = value
+                value = value.rstrip('.')
+                if original_value != value:
+                    _LOGGER.debug("Cleaned trailing dots from %s: '%s' -> '%s'", 
+                                 label, original_value, value)
+            
             # Label must be non-empty and non-data start/end delimiters
             if label and value and label not in ('\x02', '\x03'):
+                # 2. Validate Checksum (only for properly formatted lines)
+                if len(line) >= 3 and line[-2] == ' ':
+                    if not validate_checksum(line):
+                        invalid_lines += 1
+                        # Only accept PTEC and OPTARIF values without valid checksums
+                        if label in ('PTEC', 'OPTARIF'):
+                            _LOGGER.warning("Invalid checksum for TIC line %d: '%s' - but accepting %s value '%s'", 
+                                           i+1, line, label, value)
+                        else:
+                            _LOGGER.warning("Invalid checksum for TIC line %d: '%s' - rejecting %s value", 
+                                           i+1, line, label)
+                            continue
+                    else:
+                        valid_lines += 1
+                else:
+                    # Line without proper checksum format
+                    invalid_lines += 1
+                    # Only accept PTEC and OPTARIF values without checksum format
+                    if label in ('PTEC', 'OPTARIF'):
+                        _LOGGER.warning("Line %d missing checksum: '%s' - but accepting %s value '%s'", 
+                                       i+1, line, label, value)
+                    else:
+                        _LOGGER.warning("Line %d missing checksum: '%s' - rejecting %s value", 
+                                       i+1, line, label)
+                        continue
+                
+                # If we reach here, the value should be extracted
                 extracted_data[label] = value
                 _LOGGER.debug("Successfully extracted: %s = %s", label, value)
             else:
                 _LOGGER.debug("Skipped line with empty label/value or delimiter: label='%s', value='%s'", 
                              label, value)
         else:
-            _LOGGER.warning("Line %d has unexpected format after checksum validation: '%s' -> parts: %s", 
-                           i+1, data_part, parts)
+            invalid_lines += 1
+            _LOGGER.warning("Line %d has unexpected format: '%s' -> parts: %s", 
+                           i+1, line, parts)
     
     _LOGGER.info("TIC frame parsing complete: %d valid lines, %d invalid lines, %d extracted values", 
                 valid_lines, invalid_lines, len(extracted_data))
