@@ -26,14 +26,14 @@ LINKY_MAPPING = {
         "state_class": "total_increasing", 
     },
     "HCHP": {
-        "name": "Consumption (Peak Hours)", 
+        "name": "EConsumption (Peak Hours)", 
         "unit": "Wh",
         "icon": "mdi:counter",
         "device_class": SensorDeviceClass.ENERGY, 
         "state_class": "total_increasing", 
     },
     "HCHC": {
-        "name": "Consumption (Off-Peak Hours)", 
+        "name": "EConsumption (Off-Peak Hours)", 
         "unit": "Wh",
         "icon": "mdi:counter",
         "device_class": SensorDeviceClass.ENERGY, 
@@ -41,14 +41,14 @@ LINKY_MAPPING = {
     },
     # Instantaneous Power and Current
     "IINST": {
-        "name": "Instantaneous Current (Total)", 
+        "name": "EInstantaneous Current (Total)", 
         "unit": "A",
         "icon": "mdi:flash",
         "device_class": SensorDeviceClass.CURRENT, 
         "state_class": "measurement", 
     },
     "PAPP": {
-        "name": "Apparent Power", 
+        "name": "EApparent Power", 
         "unit": "VA",
         "icon": "mdi:lightning-bolt",
         "device_class": SensorDeviceClass.APPARENT_POWER, 
